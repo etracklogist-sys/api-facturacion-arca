@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { execSync } = require('child_process');
 const { LoginTicket, Wsfev1 } = require('afip-apis');
 
 const app = express();
@@ -97,44 +96,6 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-// Endpoint de diagnóstico para OpenSSL y archivos en Railway
-app.get('/api/debug-openssl', (req, res) => {
-  try {
-    asegurarCertificados();
-
-    let opensslVersion = 'No disponible';
-    try {
-      opensslVersion = execSync('openssl version', { encoding: 'utf8' }).trim();
-    } catch (e) {
-      opensslVersion = 'Error ejecutando openssl: ' + e.message;
-    }
-
-    let certCheck = 'No probado';
-    try {
-      certCheck = execSync(`openssl x509 -in ${certPath} -noout -subject -dates`, { encoding: 'utf8' }).trim();
-    } catch (e) {
-      certCheck = 'Error leyendo cert: ' + (e.stderr?.toString() || e.message);
-    }
-
-    let keyCheck = 'No probado';
-    try {
-      keyCheck = execSync(`openssl rsa -in ${keyPath} -check -noout`, { encoding: 'utf8' }).trim();
-    } catch (e) {
-      keyCheck = 'Error leyendo key: ' + (e.stderr?.toString() || e.message);
-    }
-
-    res.json({
-      opensslVersion,
-      certPath,
-      keyPath,
-      certCheck,
-      keyCheck
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message, stack: err.stack });
-  }
-});
-
 app.get('/api/status', async (req, res) => {
   try {
     const dummyResp = await wsfe.FEDummy();
@@ -155,12 +116,10 @@ app.get('/api/status', async (req, res) => {
       ultimoComprobanteFacturaA: ultimoComprobante
     });
   } catch (error) {
-    console.error('Error detallado ARCA:', error);
+    console.error('Error al conectar con ARCA:', error);
     res.status(500).json({
       success: false,
-      errorMensaje: error.message || 'Error al conectar con ARCA',
-      errorCompleto: error.toString(),
-      pila: error.stack
+      error: error.message || 'Error al conectar con ARCA'
     });
   }
 });
