@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const { LoginTicket, Wsfev1 } = require('afip-apis');
 
 const app = express();
@@ -10,12 +11,21 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const isProd = process.env.ARCA_PRODUCCION === 'true';
-const CUIT = Number(process.env.ARCA_CUIT);
+const CUIT = Number(process.env.ARCA_CUIT || 30718195477);
 const PTO_VENTA = Number(process.env.ARCA_PTO_VENTA || 3);
 
-// Rutas de credenciales
-const certPath = path.resolve(__dirname, process.env.ARCA_CERT_PATH);
-const keyPath = path.resolve(__dirname, process.env.ARCA_KEY_PATH);
+// Manejo seguro de certificados para Local o Cloud (Railway)
+let certPath = process.env.ARCA_CERT_PATH ? path.resolve(__dirname, process.env.ARCA_CERT_PATH) : null;
+let keyPath = process.env.ARCA_KEY_PATH ? path.resolve(__dirname, process.env.ARCA_KEY_PATH) : null;
+
+if (process.env.ARCA_CERT_CONTENT && process.env.ARCA_KEY_CONTENT) {
+  const tmpCert = path.resolve('/tmp', 'certificado.crt');
+  const tmpKey = path.resolve('/tmp', 'privado.key');
+  fs.writeFileSync(tmpCert, process.env.ARCA_CERT_CONTENT.replace(/\\n/g, '\n'));
+  fs.writeFileSync(tmpKey, process.env.ARCA_KEY_CONTENT.replace(/\\n/g, '\n'));
+  certPath = tmpCert;
+  keyPath = tmpKey;
+}
 
 // Endpoints oficiales ARCA
 const WSAA_URL = isProd
@@ -41,10 +51,13 @@ async function getAuthPayload() {
     };
   }
 
+  if (!certPath || !keyPath) {
+    throw new Error('Certificados de ARCA no configurados en las rutas o variables de entorno');
+  }
+
   // Obtenemos el ticket de acceso del WSAA
   const ticket = await loginTicketManager.wsaaLogin('wsfe', WSAA_URL, certPath, keyPath, 720);
 
-  // Inspección de todas las propiedades posibles que entrega afip-apis
   console.log('[DEBUG TICKET COMPLETO]:', JSON.stringify(ticket, null, 2));
 
   const tokenReal = ticket?.Token || ticket?.token || ticket?.credentials?.token;
