@@ -32,17 +32,22 @@ const wsfe = new Wsfev1(WSFE_URL);
 
 let authTicketCache = null;
 
+// Función para limpiar y normalizar certificados PEM en entornos Linux/Railway
+function normalizarPem(str) {
+  if (!str) return '';
+  let res = str.trim().replace(/^["']|["']$/g, '');
+  res = res.replace(/\\r/g, '').replace(/\r/g, '').replace(/\\n/g, '\n').trim();
+  return res + '\n';
+}
+
 function asegurarCertificados() {
   if (process.env.ARCA_CERT_CONTENT && process.env.ARCA_KEY_CONTENT) {
     const tmpCert = path.resolve('/tmp', 'certificado.crt');
     const tmpKey = path.resolve('/tmp', 'privado.key');
-    
-    // Normalizar comillas y saltos de línea literales
-    const certLimpio = process.env.ARCA_CERT_CONTENT.replace(/^"|"$/g, '').replace(/\\n/g, '\n');
-    const keyLimpia = process.env.ARCA_KEY_CONTENT.replace(/^"|"$/g, '').replace(/\\n/g, '\n');
 
-    fs.writeFileSync(tmpCert, certLimpio, 'utf8');
-    fs.writeFileSync(tmpKey, keyLimpia, 'utf8');
+    fs.writeFileSync(tmpCert, normalizarPem(process.env.ARCA_CERT_CONTENT), 'utf8');
+    fs.writeFileSync(tmpKey, normalizarPem(process.env.ARCA_KEY_CONTENT), 'utf8');
+    
     certPath = tmpCert;
     keyPath = tmpKey;
   }
@@ -67,7 +72,7 @@ async function getAuthPayload() {
     throw new Error('Certificados de ARCA no configurados en las rutas o variables de entorno');
   }
 
-  // Obtenemos el ticket de acceso del WSAA
+  // Solicitud del ticket de acceso al WSAA de ARCA
   const ticket = await loginTicketManager.wsaaLogin('wsfe', WSAA_URL, certPath, keyPath, 720);
 
   console.log('[DEBUG TICKET COMPLETO]:', JSON.stringify(ticket, null, 2));
@@ -142,7 +147,7 @@ app.post('/api/facturar', async (req, res) => {
 
     const Auth = await getAuthPayload();
 
-    // 1. Obtener último comprobante
+    // 1. Obtener último comprobante autorizado
     const respLast = await wsfe.FECompUltimoAutorizado({
       Auth,
       PtoVta: Number(puntoVenta),
@@ -159,7 +164,7 @@ app.post('/api/facturar', async (req, res) => {
       .split('T')[0]
       .replace(/-/g, '');
 
-    // Estructura XML que recibe ARCA
+    // Estructura XML oficial de ARCA
     const requestData = {
       Auth: {
         Token: Auth.Token,
