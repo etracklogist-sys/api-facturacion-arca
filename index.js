@@ -14,18 +14,9 @@ const isProd = process.env.ARCA_PRODUCCION === 'true';
 const CUIT = Number(process.env.ARCA_CUIT || 30718195477);
 const PTO_VENTA = Number(process.env.ARCA_PTO_VENTA || 3);
 
-// Manejo seguro de certificados para Local o Cloud (Railway)
+// Rutas de credenciales locales por defecto
 let certPath = process.env.ARCA_CERT_PATH ? path.resolve(__dirname, process.env.ARCA_CERT_PATH) : null;
 let keyPath = process.env.ARCA_KEY_PATH ? path.resolve(__dirname, process.env.ARCA_KEY_PATH) : null;
-
-if (process.env.ARCA_CERT_CONTENT && process.env.ARCA_KEY_CONTENT) {
-  const tmpCert = path.resolve('/tmp', 'certificado.crt');
-  const tmpKey = path.resolve('/tmp', 'privado.key');
-  fs.writeFileSync(tmpCert, process.env.ARCA_CERT_CONTENT.replace(/\\n/g, '\n'));
-  fs.writeFileSync(tmpKey, process.env.ARCA_KEY_CONTENT.replace(/\\n/g, '\n'));
-  certPath = tmpCert;
-  keyPath = tmpKey;
-}
 
 // Endpoints oficiales ARCA
 const WSAA_URL = isProd
@@ -41,6 +32,22 @@ const wsfe = new Wsfev1(WSFE_URL);
 
 let authTicketCache = null;
 
+function asegurarCertificados() {
+  if (process.env.ARCA_CERT_CONTENT && process.env.ARCA_KEY_CONTENT) {
+    const tmpCert = path.resolve('/tmp', 'certificado.crt');
+    const tmpKey = path.resolve('/tmp', 'privado.key');
+    
+    // Normalizar comillas y saltos de línea literales
+    const certLimpio = process.env.ARCA_CERT_CONTENT.replace(/^"|"$/g, '').replace(/\\n/g, '\n');
+    const keyLimpia = process.env.ARCA_KEY_CONTENT.replace(/^"|"$/g, '').replace(/\\n/g, '\n');
+
+    fs.writeFileSync(tmpCert, certLimpio, 'utf8');
+    fs.writeFileSync(tmpKey, keyLimpia, 'utf8');
+    certPath = tmpCert;
+    keyPath = tmpKey;
+  }
+}
+
 async function getAuthPayload() {
   const now = new Date();
   if (authTicketCache && authTicketCache.expiration > now) {
@@ -50,6 +57,11 @@ async function getAuthPayload() {
       Cuit: CUIT
     };
   }
+
+  asegurarCertificados();
+
+  console.log('[DEBUG CERT PATH]:', certPath);
+  console.log('[DEBUG KEY PATH]:', keyPath);
 
   if (!certPath || !keyPath) {
     throw new Error('Certificados de ARCA no configurados en las rutas o variables de entorno');
