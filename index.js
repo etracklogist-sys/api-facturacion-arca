@@ -32,22 +32,26 @@ const wsfe = new Wsfev1(WSFE_URL);
 
 let authTicketCache = null;
 
-// Función para limpiar y normalizar certificados PEM en entornos Linux/Railway
-function normalizarPem(str) {
-  if (!str) return '';
-  let res = str.trim().replace(/^["']|["']$/g, '');
-  res = res.replace(/\\r/g, '').replace(/\r/g, '').replace(/\\n/g, '\n').trim();
-  return res + '\n';
-}
-
 function asegurarCertificados() {
   if (process.env.ARCA_CERT_CONTENT && process.env.ARCA_KEY_CONTENT) {
     const tmpCert = path.resolve('/tmp', 'certificado.crt');
     const tmpKey = path.resolve('/tmp', 'privado.key');
 
-    fs.writeFileSync(tmpCert, normalizarPem(process.env.ARCA_CERT_CONTENT), 'utf8');
-    fs.writeFileSync(tmpKey, normalizarPem(process.env.ARCA_KEY_CONTENT), 'utf8');
-    
+    let certData = process.env.ARCA_CERT_CONTENT.trim();
+    let keyData = process.env.ARCA_KEY_CONTENT.trim();
+
+    // Decodificación directa del Base64 cargado en Railway
+    const certBuffer = certData.includes('BEGIN CERTIFICATE')
+      ? Buffer.from(certData.replace(/\\r/g, '').replace(/\r/g, '').replace(/\\n/g, '\n').trim() + '\n', 'utf8')
+      : Buffer.from(certData, 'base64');
+
+    const keyBuffer = keyData.includes('PRIVATE KEY')
+      ? Buffer.from(keyData.replace(/\\r/g, '').replace(/\r/g, '').replace(/\\n/g, '\n').trim() + '\n', 'utf8')
+      : Buffer.from(keyData, 'base64');
+
+    fs.writeFileSync(tmpCert, certBuffer);
+    fs.writeFileSync(tmpKey, keyBuffer);
+
     certPath = tmpCert;
     keyPath = tmpKey;
   }
@@ -65,9 +69,6 @@ async function getAuthPayload() {
 
   asegurarCertificados();
 
-  console.log('[DEBUG CERT PATH]:', certPath);
-  console.log('[DEBUG KEY PATH]:', keyPath);
-
   if (!certPath || !keyPath) {
     throw new Error('Certificados de ARCA no configurados en las rutas o variables de entorno');
   }
@@ -75,14 +76,9 @@ async function getAuthPayload() {
   // Solicitud del ticket de acceso al WSAA de ARCA
   const ticket = await loginTicketManager.wsaaLogin('wsfe', WSAA_URL, certPath, keyPath, 720);
 
-  console.log('[DEBUG TICKET COMPLETO]:', JSON.stringify(ticket, null, 2));
-
   const tokenReal = ticket?.Token || ticket?.token || ticket?.credentials?.token;
   const signReal = ticket?.Sign || ticket?.sign || ticket?.credentials?.sign;
   const expirationReal = ticket?.expirationTime || ticket?.ExpirationTime || ticket?.header?.expirationTime;
-
-  console.log('[DEBUG AUTH REAL] Token obtenido:', tokenReal ? tokenReal.substring(0, 30) + '...' : 'SIGUE UNDEFINED');
-  console.log('[DEBUG AUTH REAL] Sign obtenido:', signReal ? signReal.substring(0, 30) + '...' : 'SIGUE UNDEFINED');
 
   authTicketCache = {
     token: tokenReal,
@@ -147,7 +143,6 @@ app.post('/api/facturar', async (req, res) => {
 
     const Auth = await getAuthPayload();
 
-    // 1. Obtener último comprobante autorizado
     const respLast = await wsfe.FECompUltimoAutorizado({
       Auth,
       PtoVta: Number(puntoVenta),
@@ -156,15 +151,11 @@ app.post('/api/facturar', async (req, res) => {
     const lastVoucher = Number(respLast?.FECompUltimoAutorizadoResult?.CbteNro ?? 0);
     const nextVoucherNumber = lastVoucher + 1;
 
-    console.log(`\n========================================`);
-    console.log(`[ARCA SOLICITUD] Pto Vta: ${puntoVenta} | Cbte N°: ${nextVoucherNumber} | Total: $${total}`);
-
     const hoyStr = new Date(Date.now() - (new Date()).getTimezoneOffset() * 60000)
       .toISOString()
       .split('T')[0]
       .replace(/-/g, '');
 
-    // Estructura XML oficial de ARCA
     const requestData = {
       Auth: {
         Token: Auth.Token,
@@ -215,24 +206,18 @@ app.post('/api/facturar', async (req, res) => {
 
     const respCAE = await wsfe.FECAESolicitar(requestData);
 
-    console.log('[ARCA RESPUESTA CRUDA]:', JSON.stringify(respCAE, null, 2));
-
     const resResult = respCAE?.FECAESolicitarResult || respCAE;
     const detRespRaw = resResult?.FeDetResp?.FECAEDetResponse;
     const detResp = Array.isArray(detRespRaw) ? detRespRaw[0] : detRespRaw;
 
     if (!detResp || detResp.Resultado === 'R') {
       const obs = detResp?.Observaciones || resResult?.Errors;
-      console.error('[ARCA RECHAZADO]:', obs);
       return res.status(400).json({
         success: false,
         motivo: 'Comprobante rechazado por ARCA',
         observaciones: obs
       });
     }
-
-    console.log(`[ARCA APROBADO] CAE: ${detResp.CAE} | Vto: ${detResp.CAEFchVto}`);
-    console.log(`========================================\n`);
 
     res.json({
       success: true,
