@@ -120,7 +120,8 @@ app.get('/api/status', async (req, res) => {
     console.error('Error al conectar con ARCA:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Error al conectar con ARCA'
+      error: error.message || 'Error al conectar con ARCA',
+      detalles: error.stack || String(error)
     });
   }
 });
